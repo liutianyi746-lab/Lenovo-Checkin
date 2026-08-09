@@ -1,0 +1,25 @@
+app:
+  package_name: com.lenovo.club.app
+  startup_timeout: 30
+
+ldplayer:
+  auto_start: true
+  executable_path: auto
+  instance_index: 0
+  startup_timeout: 120
+  close_after_run: true
+
+adb:
+  address: auto
+  connect_timeout: 30
+  executable_path: adb
+
+automation:
+  element_timeout: 15
+  max_retries: 3
+  save_debug_on_error: true
+
+paths:
+  logs: logs
+  screenshots: screenshots
+  dumps: dumps
