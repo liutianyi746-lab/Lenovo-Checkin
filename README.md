@@ -43,7 +43,7 @@ C:\Tools\联想签到器
 也可以使用 Git：
 
 ```powershell
-git clone "https://github.com/liutianyi746-lab/联想签到器.git"
+git clone https://github.com/liutianyi746-lab/Lenovo-Checkin.git
 cd 联想签到器
 ```
 
