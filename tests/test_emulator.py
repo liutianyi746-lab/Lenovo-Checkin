@@ -57,3 +57,102 @@ def test_stop_uses_ldconsole_for_configured_instance(tmp_path: Path) -> None:
     LDPlayerManager(load_config(config_file), runner=runner).stop()
 
     assert calls == [[str(console), "quit", "--index", "2"]]
+
+
+def test_adb_devices_connects_local_instance_when_initial_list_is_empty(
+    tmp_path: Path,
+) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "ldplayer:\n  instance_index: 0\n"
+        "adb:\n  address: auto\n"
+        "paths:\n  logs: logs\n  screenshots: screenshots\n  dumps: dumps\n",
+        encoding="utf-8",
+    )
+    calls: list[list[str]] = []
+    device_reads = 0
+
+    def runner(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal device_reads
+        del kwargs
+        calls.append(args)
+        if args[-1] == "devices":
+            device_reads += 1
+            output = (
+                "List of devices attached\n"
+                if device_reads == 1
+                else "List of devices attached\n127.0.0.1:5555\tdevice\n"
+            )
+            return subprocess.CompletedProcess(args, 0, output, "")
+        return subprocess.CompletedProcess(args, 0, "connected to 127.0.0.1:5555\n", "")
+
+    from emulator import LDPlayerManager
+
+    manager = LDPlayerManager(load_config(config_file), runner=runner)
+
+    assert manager.adb_devices() == {"127.0.0.1:5555": "device"}
+    assert calls == [
+        ["adb", "devices"],
+        ["adb", "connect", "127.0.0.1:5555"],
+        ["adb", "devices"],
+    ]
+
+
+def test_adb_devices_does_not_autoconnect_for_explicit_address(
+    tmp_path: Path,
+) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "adb:\n  address: 127.0.0.1:6000\n"
+        "paths:\n  logs: logs\n  screenshots: screenshots\n  dumps: dumps\n",
+        encoding="utf-8",
+    )
+    calls: list[list[str]] = []
+
+    def runner(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        del kwargs
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "List of devices attached\n", "")
+
+    from emulator import LDPlayerManager
+
+    manager = LDPlayerManager(load_config(config_file), runner=runner)
+
+    assert manager.adb_devices() == {}
+    assert calls == [["adb", "devices"]]
+
+
+def test_adb_devices_reconnects_local_instance_when_it_is_offline(
+    tmp_path: Path,
+) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "ldplayer:\n  instance_index: 0\n"
+        "adb:\n  address: auto\n"
+        "paths:\n  logs: logs\n  screenshots: screenshots\n  dumps: dumps\n",
+        encoding="utf-8",
+    )
+    calls: list[list[str]] = []
+    device_reads = 0
+
+    def runner(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal device_reads
+        del kwargs
+        calls.append(args)
+        if args[-1] == "devices":
+            device_reads += 1
+            state = "offline" if device_reads == 1 else "device"
+            return subprocess.CompletedProcess(
+                args,
+                0,
+                f"List of devices attached\n127.0.0.1:5555\t{state}\n",
+                "",
+            )
+        return subprocess.CompletedProcess(args, 0, "connected to 127.0.0.1:5555\n", "")
+
+    from emulator import LDPlayerManager
+
+    manager = LDPlayerManager(load_config(config_file), runner=runner)
+
+    assert manager.adb_devices() == {"127.0.0.1:5555": "device"}
+    assert ["adb", "connect", "127.0.0.1:5555"] in calls

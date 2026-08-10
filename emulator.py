@@ -28,6 +28,10 @@ def _is_emulator_address(address: str) -> bool:
     return address.startswith(("emulator-", "127.0.0.1:", "localhost:"))
 
 
+def ldplayer_adb_address(instance_index: int) -> str:
+    return f"127.0.0.1:{5555 + instance_index * 2}"
+
+
 def select_ldplayer_device(devices: dict[str, str], instance_index: int) -> str:
     candidates = [
         address
@@ -73,10 +77,22 @@ class LDPlayerManager:
             raise EmulatorError(f"命令执行超时：{' '.join(args)}") from exc
 
     def adb_devices(self) -> dict[str, str]:
-        result = self._run([self.find_adb_executable(), "devices"])
+        adb = self.find_adb_executable()
+        result = self._run([adb, "devices"])
         if result.returncode != 0:
             raise EmulatorError(f"adb devices 失败：{result.stderr.strip()}")
-        return parse_adb_devices(result.stdout)
+        devices = parse_adb_devices(result.stdout)
+        address = ldplayer_adb_address(self.config.ldplayer.instance_index)
+        if (
+            self.config.adb.address.lower() == "auto"
+            and devices.get(address) != "device"
+        ):
+            self._run([adb, "connect", address])
+            result = self._run([adb, "devices"])
+            if result.returncode != 0:
+                raise EmulatorError(f"adb devices 失败：{result.stderr.strip()}")
+            devices = parse_adb_devices(result.stdout)
+        return devices
 
     def is_running(self) -> bool:
         try:
