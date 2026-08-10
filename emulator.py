@@ -97,7 +97,7 @@ class LDPlayerManager:
     def is_running(self) -> bool:
         try:
             return any(
-                _is_emulator_address(address) and state in {"device", "offline"}
+                _is_emulator_address(address) and state == "device"
                 for address, state in self.adb_devices().items()
             )
         except EmulatorError:

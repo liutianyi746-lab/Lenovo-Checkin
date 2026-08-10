@@ -156,3 +156,17 @@ def test_adb_devices_reconnects_local_instance_when_it_is_offline(
 
     assert manager.adb_devices() == {"127.0.0.1:5555": "device"}
     assert ["adb", "connect", "127.0.0.1:5555"] in calls
+
+
+def test_is_running_rejects_stale_offline_device(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "paths:\n  logs: logs\n  screenshots: screenshots\n  dumps: dumps\n",
+        encoding="utf-8",
+    )
+    from emulator import LDPlayerManager
+
+    manager = LDPlayerManager(load_config(config_file))
+    manager.adb_devices = lambda: {"127.0.0.1:5555": "offline"}
+
+    assert manager.is_running() is False
