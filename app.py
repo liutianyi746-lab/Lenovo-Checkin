@@ -2,11 +2,34 @@ from __future__ import annotations
 
 import logging
 import time
+import xml.etree.ElementTree as ET
 from typing import Any
 
 
 class AppError(RuntimeError):
     """联想 App 生命周期操作失败。"""
+
+
+ACTIONABLE_RESOURCE_IDS = {
+    "com.lenovo.club.app:id/navigator_bottom",
+    "com.lenovo.club.app:id/personal_container",
+    "com.lenovo.club.app:id/tv_sign_title",
+    "com.lenovo.club.app:id/img_do_sign",
+}
+AI_WEBVIEW_ID = "com.lenovo.club.app:id/fl_webview_container"
+AI_READY_TEXTS = {"签到", "深度思考(自动)", "会员日领福利"}
+
+
+def is_actionable_hierarchy(xml: str) -> bool:
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        return False
+    resource_ids = {node.attrib.get("resource-id", "") for node in root.iter()}
+    if resource_ids & ACTIONABLE_RESOURCE_IDS:
+        return True
+    texts = {node.attrib.get("text", "").strip() for node in root.iter()}
+    return AI_WEBVIEW_ID in resource_ids and bool(texts & AI_READY_TEXTS)
 
 
 class LenovoApp:
@@ -89,7 +112,7 @@ class LenovoApp:
                 current = self.d.app_current()
                 last_package = current.get("package", "")
                 xml = self.d.dump_hierarchy(compressed=False)
-                if last_package == self.package_name and "<node" in xml:
+                if last_package == self.package_name and is_actionable_hierarchy(xml):
                     return
             except Exception as exc:  # noqa: BLE001 - uiautomator2 没有统一的 SDK 异常基类
                 self.logger.debug("等待 App 就绪时暂时无法读取页面：%s", exc)

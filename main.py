@@ -10,6 +10,7 @@ from config import Config, load_config, resolve_config_path
 from device import AndroidDevice
 from emulator import LDPlayerManager
 from navigation import Navigator, SecurityChallengeError
+from run_lock import AlreadyRunningError, RunLock
 from utils.hierarchy import print_ui_elements
 from utils.logger import setup_logger, success
 from utils.screenshot import capture_error, capture_page, timestamp
@@ -83,7 +84,14 @@ def run(config: Config) -> int:
 def main() -> int:
     try:
         project_dir = Path(__file__).parent
-        return run(load_config(resolve_config_path(project_dir)))
+        with RunLock(project_dir / ".checkin.lock"):
+            return run(load_config(resolve_config_path(project_dir)))
+    except AlreadyRunningError as exc:
+        logging.basicConfig(
+            level=logging.ERROR, format="%(asctime)s [%(levelname)s] %(message)s"
+        )
+        logging.getLogger(__name__).error("%s", exc)
+        return 2
     except Exception as exc:  # noqa: BLE001 - 配置入口需要转为稳定退出码
         logging.basicConfig(
             level=logging.ERROR, format="%(asctime)s [%(levelname)s] %(message)s"

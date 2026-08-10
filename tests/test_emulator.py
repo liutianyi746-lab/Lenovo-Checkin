@@ -4,7 +4,12 @@ from pathlib import Path
 import pytest
 
 from config import load_config
-from emulator import EmulatorError, parse_adb_devices, select_ldplayer_device
+from emulator import (
+    EmulatorError,
+    LDPlayerManager,
+    parse_adb_devices,
+    select_ldplayer_device,
+)
 
 
 def test_parse_adb_devices_ignores_header_and_keeps_states() -> None:
@@ -170,3 +175,121 @@ def test_is_running_rejects_stale_offline_device(tmp_path: Path) -> None:
     manager.adb_devices = lambda: {"127.0.0.1:5555": "offline"}
 
     assert manager.is_running() is False
+
+
+def test_start_prefers_ldconsole_launch_for_configured_instance(
+    tmp_path: Path, monkeypatch
+) -> None:
+    player = tmp_path / "dnplayer.exe"
+    console = tmp_path / "ldconsole.exe"
+    player.touch()
+    console.touch()
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "ldplayer:\n"
+        f"  executable_path: '{player}'\n"
+        "  instance_index: 3\n"
+        "paths:\n  logs: logs\n  screenshots: screenshots\n  dumps: dumps\n",
+        encoding="utf-8",
+    )
+    calls: list[list[str]] = []
+
+    def runner(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        del kwargs
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(
+        "emulator.subprocess.Popen",
+        lambda *args, **kwargs: calls.append(["Popen"]),
+    )
+
+    LDPlayerManager(load_config(config_file), runner=runner).start()
+
+    assert calls == [[str(console), "launch", "--index", "3"]]
+
+
+def test_ensure_running_cleans_up_and_retries_one_failed_boot(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "paths:\n  logs: logs\n  screenshots: screenshots\n  dumps: dumps\n",
+        encoding="utf-8",
+    )
+    events: list[str] = []
+
+    class RetryManager(LDPlayerManager):
+        def is_running(self) -> bool:
+            events.append("is_running")
+            return False
+
+        def start(self) -> None:
+            events.append("start")
+
+        def wait_for_boot(self) -> str:
+            events.append("wait_for_boot")
+            if events.count("wait_for_boot") == 1:
+                raise EmulatorError("first boot timed out")
+            return "127.0.0.1:5555"
+
+        def stop(self) -> None:
+            events.append("stop")
+
+        def disconnect_adb(self) -> None:
+            events.append("disconnect_adb")
+
+    manager = RetryManager(
+        load_config(config_file), sleeper=lambda seconds: events.append(f"sleep:{seconds}")
+    )
+
+    assert manager.ensure_running() == "127.0.0.1:5555"
+    assert events == [
+        "is_running",
+        "start",
+        "wait_for_boot",
+        "stop",
+        "disconnect_adb",
+        "sleep:5",
+        "is_running",
+        "start",
+        "wait_for_boot",
+    ]
+
+
+def test_ensure_running_stops_after_second_failed_boot(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "paths:\n  logs: logs\n  screenshots: screenshots\n  dumps: dumps\n",
+        encoding="utf-8",
+    )
+    events: list[str] = []
+
+    class FailingManager(LDPlayerManager):
+        def is_running(self) -> bool:
+            return False
+
+        def start(self) -> None:
+            events.append("start")
+
+        def wait_for_boot(self) -> str:
+            events.append("wait_for_boot")
+            raise EmulatorError("boot timed out")
+
+        def stop(self) -> None:
+            events.append("stop")
+
+        def disconnect_adb(self) -> None:
+            events.append("disconnect_adb")
+
+    manager = FailingManager(load_config(config_file), sleeper=lambda seconds: None)
+
+    with pytest.raises(EmulatorError, match="boot timed out"):
+        manager.ensure_running()
+
+    assert events == [
+        "start",
+        "wait_for_boot",
+        "stop",
+        "disconnect_adb",
+        "start",
+        "wait_for_boot",
+    ]

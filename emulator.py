@@ -51,9 +51,11 @@ class LDPlayerManager:
         self,
         config: Config,
         runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+        sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
         self.config = config
         self.runner = runner
+        self.sleeper = sleeper
         self.logger = logging.getLogger(__name__)
 
     def _run(
@@ -223,7 +225,20 @@ class LDPlayerManager:
             raise EmulatorError(
                 "未找到雷电模拟器，请在 config.yaml 中填写 executable_path"
             )
-        self.logger.info("正在启动雷电模拟器：%s", executable)
+        console = executable.parent / "ldconsole.exe"
+        self.logger.info("正在启动雷电模拟器实例 %d", self.config.ldplayer.instance_index)
+        if console.is_file():
+            result = self._run(
+                [
+                    str(console),
+                    "launch",
+                    "--index",
+                    str(self.config.ldplayer.instance_index),
+                ]
+            )
+            if result.returncode != 0:
+                raise EmulatorError(f"启动雷电模拟器失败：{result.stderr.strip()}")
+            return
         subprocess.Popen(
             [str(executable), f"index={self.config.ldplayer.instance_index}"],
             cwd=str(executable.parent),
@@ -231,6 +246,12 @@ class LDPlayerManager:
             stderr=subprocess.DEVNULL,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
+
+    def disconnect_adb(self) -> None:
+        address = ldplayer_adb_address(self.config.ldplayer.instance_index)
+        result = self._run([self.find_adb_executable(), "disconnect", address])
+        if result.returncode != 0:
+            self.logger.warning("断开旧 ADB 连接失败：%s", result.stderr.strip())
 
     def stop(self) -> None:
         executable = self.find_executable()
@@ -282,18 +303,35 @@ class LDPlayerManager:
                 last_error = result.stderr.strip() or result.stdout.strip()
             except EmulatorError as exc:
                 last_error = str(exc)
-            time.sleep(2)
+            self.sleeper(2)
         raise EmulatorError(
             f"等待 Android 启动超过 {self.config.ldplayer.startup_timeout} 秒。最后状态：{last_error or '未发现设备'}"
         )
 
     def ensure_running(self) -> str:
         self.logger.info("检查雷电模拟器")
-        if self.is_running():
-            self.logger.info("雷电模拟器已经运行，跳过启动")
-        elif self.config.ldplayer.auto_start:
-            self.logger.info("雷电模拟器未运行")
-            self.start()
-        else:
-            raise EmulatorError("雷电模拟器未运行，且 ldplayer.auto_start=false")
-        return self.wait_for_boot()
+        for attempt in (1, 2):
+            running = self.is_running()
+            if not running and not self.config.ldplayer.auto_start:
+                raise EmulatorError("雷电模拟器未运行，且 ldplayer.auto_start=false")
+            try:
+                if running:
+                    self.logger.info("雷电模拟器已经运行，跳过启动")
+                else:
+                    self.logger.info("雷电模拟器未运行")
+                    self.start()
+                return self.wait_for_boot()
+            except EmulatorError:
+                if attempt == 2:
+                    raise
+                self.logger.warning("首次启动未就绪，清理后自动重试一次", exc_info=True)
+                try:
+                    self.stop()
+                except EmulatorError as exc:
+                    self.logger.warning("重试前关闭模拟器失败：%s", exc)
+                try:
+                    self.disconnect_adb()
+                except EmulatorError as exc:
+                    self.logger.warning("重试前断开 ADB 失败：%s", exc)
+                self.sleeper(5)
+        raise EmulatorError("雷电模拟器启动失败")

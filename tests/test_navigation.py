@@ -1,4 +1,6 @@
 from navigation import (
+    NavigationError,
+    Navigator,
     PageState,
     detect_page_from_xml,
     has_known_marketing_popup,
@@ -52,3 +54,73 @@ def test_detects_only_confirmed_marketing_popup_close_button() -> None:
     unknown = '<hierarchy><node text="稍后再说" clickable="true" /></hierarchy>'
     assert has_known_marketing_popup(known)
     assert not has_known_marketing_popup(unknown)
+
+
+def test_go_to_home_uses_verified_fallback_and_waits_for_native_bottom_navigation(
+    monkeypatch,
+) -> None:
+    class Device:
+        def __init__(self) -> None:
+            self.clicks: list[tuple[int, int]] = []
+
+        def window_size(self) -> tuple[int, int]:
+            return 1920, 1080
+
+        def click(self, x: int, y: int) -> None:
+            self.clicks.append((x, y))
+
+    device = Device()
+    navigator = Navigator(device)
+    checked: list[tuple[bool, bool, str]] = []
+    right_products = '<hierarchy><node resource-id="rv_recommend" /></hierarchy>'
+    native_home = (
+        '<hierarchy><node resource-id="com.lenovo.club.app:id/navigator_bottom" />'
+        "</hierarchy>"
+    )
+
+    monkeypatch.setattr(
+        navigator,
+        "_click_text",
+        lambda *args, **kwargs: (_ for _ in ()).throw(NavigationError("missing")),
+    )
+
+    def wait_for(predicate, description: str) -> str:
+        checked.append((predicate(right_products), predicate(native_home), description))
+        return native_home
+
+    monkeypatch.setattr(navigator, "_wait_for", wait_for)
+
+    navigator.go_to_home()
+
+    assert device.clicks == [(300, 105)]
+    assert checked == [(False, True, "原生首页底部导航")]
+
+
+def test_go_to_mine_waits_for_native_home_before_clicking_mine(monkeypatch) -> None:
+    navigator = Navigator(object())
+    events: list[str] = []
+    native_home = (
+        '<hierarchy><node resource-id="com.lenovo.club.app:id/navigator_bottom" />'
+        "</hierarchy>"
+    )
+
+    def wait_for(predicate, description: str) -> str:
+        events.append(f"wait:{description}")
+        if description == "原生首页底部导航":
+            assert predicate(native_home)
+        return native_home
+
+    def click_text(text: str, prefer: str = "top", contains: bool = False) -> None:
+        del prefer, contains
+        events.append(f"click:{text}")
+
+    monkeypatch.setattr(navigator, "_wait_for", wait_for)
+    monkeypatch.setattr(navigator, "_click_text", click_text)
+
+    navigator.go_to_mine()
+
+    assert events == [
+        "wait:原生首页底部导航",
+        "click:我的",
+        "wait:我的页面",
+    ]

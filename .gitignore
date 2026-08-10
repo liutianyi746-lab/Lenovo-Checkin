@@ -6,6 +6,7 @@ config.local.yaml
 logs/*.log
 screenshots/*.png
 dumps/*.xml
+.checkin.lock
 !logs/.gitkeep
 !screenshots/.gitkeep
 !dumps/.gitkeep
