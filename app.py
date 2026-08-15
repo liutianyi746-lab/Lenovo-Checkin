@@ -18,6 +18,10 @@ ACTIONABLE_RESOURCE_IDS = {
 }
 AI_WEBVIEW_ID = "com.lenovo.club.app:id/fl_webview_container"
 AI_READY_TEXTS = {"签到", "深度思考(自动)", "会员日领福利"}
+UPDATE_DIALOG_TITLE_ID = "com.lenovo.club.app:id/tv_title"
+UPDATE_DIALOG_DISMISS_ID = "com.lenovo.club.app:id/btn_left"
+UPDATE_DIALOG_TITLE_TEXT = "发现新版本"
+UPDATE_DIALOG_DISMISS_TEXT = "下次再说"
 
 
 def is_actionable_hierarchy(xml: str) -> bool:
@@ -30,6 +34,25 @@ def is_actionable_hierarchy(xml: str) -> bool:
         return True
     texts = {node.attrib.get("text", "").strip() for node in root.iter()}
     return AI_WEBVIEW_ID in resource_ids and bool(texts & AI_READY_TEXTS)
+
+
+def is_known_update_dialog(xml: str) -> bool:
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        return False
+    has_exact_title = any(
+        node.attrib.get("resource-id") == UPDATE_DIALOG_TITLE_ID
+        and node.attrib.get("text") == UPDATE_DIALOG_TITLE_TEXT
+        for node in root.iter()
+    )
+    has_exact_dismiss_button = any(
+        node.attrib.get("resource-id") == UPDATE_DIALOG_DISMISS_ID
+        and node.attrib.get("text") == UPDATE_DIALOG_DISMISS_TEXT
+        and node.attrib.get("clickable") == "true"
+        for node in root.iter()
+    )
+    return has_exact_title and has_exact_dismiss_button
 
 
 class LenovoApp:
@@ -112,6 +135,16 @@ class LenovoApp:
                 current = self.d.app_current()
                 last_package = current.get("package", "")
                 xml = self.d.dump_hierarchy(compressed=False)
+                if last_package == self.package_name and is_known_update_dialog(xml):
+                    dismiss_button = self.d(
+                        resourceId=UPDATE_DIALOG_DISMISS_ID,
+                        text=UPDATE_DIALOG_DISMISS_TEXT,
+                    )
+                    if dismiss_button.exists:
+                        self.logger.info("检测到版本更新弹窗，点击‘下次再说’")
+                        dismiss_button.click()
+                        time.sleep(0.5)
+                        continue
                 if last_package == self.package_name and is_actionable_hierarchy(xml):
                     return
             except Exception as exc:  # noqa: BLE001 - uiautomator2 没有统一的 SDK 异常基类

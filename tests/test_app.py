@@ -77,3 +77,66 @@ def test_wait_until_ready_ignores_splash_and_empty_webview_until_ui_is_actionabl
     LenovoApp(device, "com.lenovo.club.app", startup_timeout=2).wait_until_ready()
 
     assert device.dump_count == 3
+
+
+class UpdateDialogButton:
+    def __init__(self, device: "UpdateDialogDevice") -> None:
+        self.device = device
+
+    @property
+    def exists(self) -> bool:
+        return True
+
+    def click(self) -> None:
+        self.device.dismiss_clicks += 1
+        self.device.dismissed = True
+
+
+class UpdateDialogDevice:
+    def __init__(self, *, exact_dialog: bool = True) -> None:
+        self.exact_dialog = exact_dialog
+        self.dismissed = False
+        self.dismiss_clicks = 0
+        self.dump_count = 0
+
+    def app_current(self) -> dict[str, str]:
+        return {"package": "com.lenovo.club.app"}
+
+    def dump_hierarchy(self, compressed: bool = False) -> str:
+        del compressed
+        self.dump_count += 1
+        if self.dismissed or (not self.exact_dialog and self.dump_count > 1):
+            return (
+                '<hierarchy><node resource-id="com.lenovo.club.app:id/'
+                'navigator_bottom" /></hierarchy>'
+            )
+        title = "发现新版本" if self.exact_dialog else "温馨提示"
+        return (
+            f'<hierarchy><node resource-id="com.lenovo.club.app:id/tv_title" '
+            f'text="{title}" /><node resource-id="com.lenovo.club.app:id/btn_left" '
+            'text="下次再说" clickable="true" /><node resource-id="com.lenovo.club.app:id/'
+            'btn_right" text="立即体验" clickable="true" /></hierarchy>'
+        )
+
+    def __call__(self, **selector: str) -> UpdateDialogButton:
+        assert selector == {
+            "resourceId": "com.lenovo.club.app:id/btn_left",
+            "text": "下次再说",
+        }
+        return UpdateDialogButton(self)
+
+
+def test_wait_until_ready_dismisses_only_confirmed_update_dialog() -> None:
+    device = UpdateDialogDevice()
+
+    LenovoApp(device, "com.lenovo.club.app", startup_timeout=1).wait_until_ready()
+
+    assert device.dismiss_clicks == 1
+
+
+def test_wait_until_ready_does_not_click_unconfirmed_dialog() -> None:
+    device = UpdateDialogDevice(exact_dialog=False)
+
+    LenovoApp(device, "com.lenovo.club.app", startup_timeout=1).wait_until_ready()
+
+    assert device.dismiss_clicks == 0
