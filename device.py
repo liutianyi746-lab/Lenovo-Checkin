@@ -45,6 +45,8 @@ class AndroidDevice:
             )
         except FileNotFoundError as exc:
             raise DeviceError(f"ADB 不可用：{self.adb_path}") from exc
+        except OSError as exc:
+            raise DeviceError(f"{operation} 失败：{exc}") from exc
         except subprocess.TimeoutExpired as exc:
             raise DeviceError(f"{operation}超时") from exc
         if result.returncode != 0:

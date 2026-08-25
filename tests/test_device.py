@@ -93,3 +93,19 @@ def test_connect_translates_persistent_tcp_adb_timeout() -> None:
             runner=runner,
             connector=lambda address: ConnectedDevice(),
         ).connect()
+
+
+def test_connect_translates_adb_process_launch_error() -> None:
+    def runner(
+        args: list[str], **kwargs: Any
+    ) -> subprocess.CompletedProcess[str]:
+        del args, kwargs
+        raise PermissionError("拒绝访问")
+
+    with pytest.raises(DeviceError, match="检查 ADB 失败.*拒绝访问"):
+        AndroidDevice(
+            "emulator-5554",
+            "adb",
+            runner=runner,
+            connector=lambda address: ConnectedDevice(),
+        ).connect()
