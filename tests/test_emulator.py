@@ -9,6 +9,7 @@ from emulator import (
     LDPlayerManager,
     parse_adb_devices,
     select_ldplayer_device,
+    stop_processes_by_executable,
 )
 
 
@@ -35,6 +36,117 @@ def test_select_ldplayer_device_prefers_emulator_candidates() -> None:
 def test_select_ldplayer_device_rejects_missing_instance() -> None:
     with pytest.raises(EmulatorError, match="实例"):
         select_ldplayer_device({"emulator-5554": "device"}, 2)
+
+
+def test_stop_processes_by_executable_passes_resolved_path_as_argument(
+    tmp_path: Path,
+) -> None:
+    adb = tmp_path / "adb.exe"
+    adb.touch()
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def runner(
+        args: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    stop_processes_by_executable(adb, runner=runner)
+
+    assert calls[0][0][-1] == str(adb.resolve())
+    assert "ExecutablePath" in calls[0][0][-2]
+    assert "Stop-Process" in calls[0][0][-2]
+    assert "/IM" not in " ".join(calls[0][0])
+
+
+def adb_test_config(tmp_path: Path):
+    adb = tmp_path / "adb.exe"
+    adb.touch()
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        f"adb:\n  executable_path: '{adb}'\n"
+        "paths:\n  logs: logs\n  screenshots: screenshots\n  dumps: dumps\n",
+        encoding="utf-8",
+    )
+    return load_config(config_file), adb.resolve()
+
+
+def test_reset_adb_server_uses_normal_restart_without_forced_cleanup(
+    tmp_path: Path,
+) -> None:
+    config, adb = adb_test_config(tmp_path)
+    calls: list[list[str]] = []
+    cleaned: list[Path] = []
+
+    def runner(
+        args: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        del kwargs
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    manager = LDPlayerManager(config, runner=runner, process_cleaner=cleaned.append)
+
+    manager.reset_adb_server()
+
+    assert calls == [[str(adb), "kill-server"], [str(adb), "start-server"]]
+    assert cleaned == []
+
+
+def test_reset_adb_server_cleans_exact_path_after_kill_timeout(
+    tmp_path: Path,
+) -> None:
+    config, adb = adb_test_config(tmp_path)
+    cleaned: list[Path] = []
+
+    def runner(
+        args: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        if args[-1] == "kill-server":
+            raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    manager = LDPlayerManager(config, runner=runner, process_cleaner=cleaned.append)
+
+    manager.reset_adb_server()
+
+    assert cleaned == [adb]
+
+
+def test_reset_adb_server_stops_when_exact_cleanup_fails(tmp_path: Path) -> None:
+    config, _ = adb_test_config(tmp_path)
+
+    def runner(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+
+    def cleaner(path: Path) -> None:
+        del path
+        raise EmulatorError("cleanup failed")
+
+    manager = LDPlayerManager(config, runner=runner, process_cleaner=cleaner)
+
+    with pytest.raises(EmulatorError, match="cleanup failed"):
+        manager.reset_adb_server()
+
+
+def test_reset_adb_server_stops_when_start_server_fails(tmp_path: Path) -> None:
+    config, _ = adb_test_config(tmp_path)
+
+    def runner(
+        args: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        del kwargs
+        return subprocess.CompletedProcess(
+            args,
+            0 if args[-1] == "kill-server" else 1,
+            "",
+            "cannot start",
+        )
+
+    manager = LDPlayerManager(config, runner=runner)
+
+    with pytest.raises(EmulatorError, match="start-server"):
+        manager.reset_adb_server()
 
 
 def test_stop_uses_ldconsole_for_configured_instance(tmp_path: Path) -> None:

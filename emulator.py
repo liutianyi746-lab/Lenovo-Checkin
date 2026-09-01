@@ -15,6 +15,45 @@ class EmulatorError(RuntimeError):
     """雷电模拟器发现、启动或连接失败。"""
 
 
+def stop_processes_by_executable(
+    executable: Path,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> None:
+    if os.name != "nt":
+        raise EmulatorError("ADB 强制恢复仅支持 Windows")
+    target = executable.expanduser().resolve()
+    script = (
+        "$target=[IO.Path]::GetFullPath($args[0]);"
+        "$items=Get-CimInstance Win32_Process | Where-Object {"
+        "$_.ExecutablePath -and "
+        "[StringComparer]::OrdinalIgnoreCase.Equals("
+        "[IO.Path]::GetFullPath($_.ExecutablePath),$target)};"
+        "$items | ForEach-Object {"
+        "Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop}"
+    )
+    try:
+        result = runner(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                script,
+                str(target),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        raise EmulatorError("无法精确清理雷电 ADB 进程") from exc
+    if result.returncode != 0:
+        raise EmulatorError(f"精确清理雷电 ADB 失败：{result.stderr.strip()}")
+
+
 def parse_adb_devices(output: str) -> dict[str, str]:
     devices: dict[str, str] = {}
     for line in output.splitlines():
@@ -52,10 +91,12 @@ class LDPlayerManager:
         config: Config,
         runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
         sleeper: Callable[[float], None] = time.sleep,
+        process_cleaner: Callable[[Path], None] = stop_processes_by_executable,
     ) -> None:
         self.config = config
         self.runner = runner
         self.sleeper = sleeper
+        self.process_cleaner = process_cleaner
         self.logger = logging.getLogger(__name__)
 
     def _run(
@@ -95,6 +136,22 @@ class LDPlayerManager:
                 raise EmulatorError(f"adb devices 失败：{result.stderr.strip()}")
             devices = parse_adb_devices(result.stdout)
         return devices
+
+    def reset_adb_server(self) -> None:
+        adb_command = self.find_adb_executable()
+        adb = Path(shutil.which(adb_command) or adb_command).expanduser().resolve()
+        try:
+            stopped = self._run([str(adb), "kill-server"])
+            if stopped.returncode != 0:
+                raise EmulatorError(
+                    f"adb kill-server 失败：{stopped.stderr.strip()}"
+                )
+        except EmulatorError as exc:
+            self.logger.warning("常规停止 ADB 失败，执行精确路径清理：%s", exc)
+            self.process_cleaner(adb)
+        started = self._run([str(adb), "start-server"])
+        if started.returncode != 0:
+            raise EmulatorError(f"adb start-server 失败：{started.stderr.strip()}")
 
     def is_running(self) -> bool:
         try:
