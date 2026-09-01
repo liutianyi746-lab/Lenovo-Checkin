@@ -200,7 +200,42 @@ Get-Content .\logs\checkin.log -Wait
 
 ## 8. 设置每天 00:01 自动运行
 
-先确认手动运行成功，再打开 Windows“任务计划程序”：
+先确认手动运行成功，然后在项目目录打开 PowerShell，执行：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\安装自动任务.ps1
+```
+
+脚本会注册或更新两个本地任务：
+
+- `联想每日自动签到`：每天 00:01 运行；如果当时关机或休眠，Windows 可用后尽快运行。
+- `联想签到漏跑检查`：用户登录 Windows 时检查当天日志；只有当天没有成功记录时才调用 `main.py` 补跑，已经签到则不会启动雷电。
+
+主任务失败后每隔 5 分钟重试一次，最多重试 3 次。两个任务都设置为已有实例运行时不启动新实例，并继续由 `main.py` 负责运行锁、幂等签到、安全验证和关闭雷电。
+
+查看任务状态：
+
+```powershell
+Get-ScheduledTask -TaskName "联想每日自动签到", "联想签到漏跑检查"
+```
+
+手动测试漏跑检查：
+
+```powershell
+Start-ScheduledTask -TaskName "联想签到漏跑检查"
+Get-ScheduledTaskInfo -TaskName "联想签到漏跑检查"
+```
+
+`LastTaskResult` 为 `0` 表示检查程序正常结束。若今天已经成功签到，这次检查不会打开雷电。
+
+如需删除这两个任务：
+
+```powershell
+Unregister-ScheduledTask -TaskName "联想每日自动签到" -Confirm:$false
+Unregister-ScheduledTask -TaskName "联想签到漏跑检查" -Confirm:$false
+```
+
+如果不使用安装脚本，也可以手动打开 Windows“任务计划程序”：
 
 1. 点击“创建基本任务”。
 2. 名称填写“联想每日自动签到”。
@@ -226,7 +261,7 @@ C:\Tools\联想签到器
 
 8. 保存后右键该任务，点击“运行”，再检查 `logs\checkin.log`。
 
-计划任务直接运行本地 Python 程序，不依赖 Codex。电脑在 00:01 必须处于开机或可唤醒状态，并且 Windows 账号需要具备启动雷电模拟器的权限。
+计划任务直接运行本地 Python 程序，不依赖 Codex。电脑错过 00:01 没关系，但需要在当天登录 Windows，且当前 Windows 账号需要具备启动雷电模拟器的权限。
 
 ## 9. 广告和安全验证
 
