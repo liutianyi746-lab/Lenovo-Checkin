@@ -1,4 +1,4 @@
-from app import LenovoApp
+from app import LenovoApp, is_known_flysilkworm_ad
 
 
 class ShellResult:
@@ -140,3 +140,95 @@ def test_wait_until_ready_does_not_click_unconfirmed_dialog() -> None:
     LenovoApp(device, "com.lenovo.club.app", startup_timeout=1).wait_until_ready()
 
     assert device.dismiss_clicks == 0
+
+
+class FlySilkwormAdCloseButton:
+    def __init__(self, device: "FlySilkwormAdDevice") -> None:
+        self.device = device
+
+    @property
+    def exists(self) -> bool:
+        return True
+
+    def click(self) -> None:
+        self.device.close_clicks += 1
+        self.device.dismissed = True
+
+
+class FlySilkwormAdDevice:
+    def __init__(self, *, confirmed_ad: bool = True) -> None:
+        self.confirmed_ad = confirmed_ad
+        self.dismissed = False
+        self.close_clicks = 0
+        self.dump_count = 0
+
+    def app_current(self) -> dict[str, str]:
+        return {"package": "com.lenovo.club.app"}
+
+    def dump_hierarchy(self, compressed: bool = False) -> str:
+        del compressed
+        self.dump_count += 1
+        if self.dismissed or (not self.confirmed_ad and self.dump_count > 1):
+            return (
+                '<hierarchy><node resource-id="com.lenovo.club.app:id/'
+                'navigator_bottom" /></hierarchy>'
+            )
+        banner = 'resource-id="com.android.flysilkworm:id/banner"' if self.confirmed_ad else ""
+        return (
+            '<hierarchy><node package="com.android.flysilkworm" '
+            f'{banner} /><node package="com.android.flysilkworm" '
+            'resource-id="com.android.flysilkworm:id/fl_close" '
+            'clickable="true" /></hierarchy>'
+        )
+
+    def __call__(self, **selector: str) -> FlySilkwormAdCloseButton:
+        assert selector == {
+            "resourceId": "com.android.flysilkworm:id/fl_close",
+            "packageName": "com.android.flysilkworm",
+            "clickable": True,
+        }
+        return FlySilkwormAdCloseButton(self)
+
+
+def test_wait_until_ready_closes_confirmed_flysilkworm_ad() -> None:
+    device = FlySilkwormAdDevice()
+
+    LenovoApp(device, "com.lenovo.club.app", startup_timeout=1).wait_until_ready()
+
+    assert device.close_clicks == 1
+
+
+def test_wait_until_ready_does_not_close_unconfirmed_flysilkworm_overlay() -> None:
+    device = FlySilkwormAdDevice(confirmed_ad=False)
+
+    LenovoApp(device, "com.lenovo.club.app", startup_timeout=1).wait_until_ready()
+
+    assert device.close_clicks == 0
+
+
+def test_flysilkworm_ad_requires_exact_package_and_clickable_close_button() -> None:
+    invalid_hierarchies = (
+        (
+            '<hierarchy><node package="unexpected.package" '
+            'resource-id="com.android.flysilkworm:id/banner" />'
+            '<node package="com.android.flysilkworm" '
+            'resource-id="com.android.flysilkworm:id/fl_close" '
+            'clickable="true" /></hierarchy>'
+        ),
+        (
+            '<hierarchy><node package="com.android.flysilkworm" '
+            'resource-id="com.android.flysilkworm:id/banner" />'
+            '<node package="unexpected.package" '
+            'resource-id="com.android.flysilkworm:id/fl_close" '
+            'clickable="true" /></hierarchy>'
+        ),
+        (
+            '<hierarchy><node package="com.android.flysilkworm" '
+            'resource-id="com.android.flysilkworm:id/banner" />'
+            '<node package="com.android.flysilkworm" '
+            'resource-id="com.android.flysilkworm:id/fl_close" '
+            'clickable="false" /></hierarchy>'
+        ),
+    )
+
+    assert all(not is_known_flysilkworm_ad(xml) for xml in invalid_hierarchies)
