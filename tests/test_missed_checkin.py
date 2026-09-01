@@ -27,6 +27,20 @@ def test_has_success_for_date_rejects_info_and_missing_log(tmp_path: Path) -> No
     assert not has_success_for_date(tmp_path / "missing.log", date(2026, 9, 1))
 
 
+def test_has_success_for_date_rejects_success_text_inside_other_records(
+    tmp_path: Path,
+) -> None:
+    log_path = tmp_path / "checkin.log"
+    false_successes = (
+        "2026-09-01 00:02:03 [ERROR] xxx [SUCCESS] 签到成功",
+        "2026-09-01 00:02:03 [SUCCESS] 签到成功但后续失败",
+    )
+
+    for line in false_successes:
+        log_path.write_text(f"{line}\n", encoding="utf-8")
+        assert not has_success_for_date(log_path, date(2026, 9, 1))
+
+
 def test_run_if_needed_skips_main_after_success(tmp_path: Path) -> None:
     (tmp_path / "logs").mkdir()
     (tmp_path / "logs" / "checkin.log").write_text(

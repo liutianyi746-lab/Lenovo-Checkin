@@ -235,32 +235,6 @@ Unregister-ScheduledTask -TaskName "联想每日自动签到" -Confirm:$false
 Unregister-ScheduledTask -TaskName "联想签到漏跑检查" -Confirm:$false
 ```
 
-如果不使用安装脚本，也可以手动打开 Windows“任务计划程序”：
-
-1. 点击“创建基本任务”。
-2. 名称填写“联想每日自动签到”。
-3. 触发器选择“每天”，时间设置为 `00:01`。
-4. 操作选择“启动程序”。
-5. “程序或脚本”填写虚拟环境 Python 的完整路径，例如：
-
-```text
-C:\Tools\联想签到器\.venv\Scripts\python.exe
-```
-
-6. “添加参数”填写：
-
-```text
-main.py
-```
-
-7. “起始于”填写项目目录：
-
-```text
-C:\Tools\联想签到器
-```
-
-8. 保存后右键该任务，点击“运行”，再检查 `logs\checkin.log`。
-
 计划任务直接运行本地 Python 程序，不依赖 Codex。电脑错过 00:01 没关系，但需要在当天登录 Windows，且当前 Windows 账号需要具备启动雷电模拟器的权限。
 
 ## 9. 广告和安全验证

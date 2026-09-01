@@ -1,3 +1,4 @@
+import re
 import subprocess
 import sys
 from collections.abc import Callable
@@ -15,11 +16,11 @@ def has_success_for_date(log_path: Path, day: date) -> bool:
         lines = log_path.read_text(encoding="utf-8").splitlines()
     except (FileNotFoundError, OSError, UnicodeError):
         return False
-    prefix = f"{day.isoformat()} "
-    return any(
-        line.startswith(prefix) and any(message in line for message in SUCCESS_MESSAGES)
-        for line in lines
+    messages = "|".join(re.escape(message) for message in SUCCESS_MESSAGES)
+    success_line = re.compile(
+        rf"{re.escape(day.isoformat())} \d{{2}}:\d{{2}}:\d{{2}} (?:{messages})"
     )
+    return any(success_line.fullmatch(line) for line in lines)
 
 
 def run_if_needed(
