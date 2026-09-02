@@ -38,7 +38,7 @@ def test_select_ldplayer_device_rejects_missing_instance() -> None:
         select_ldplayer_device({"emulator-5554": "device"}, 2)
 
 
-def test_stop_processes_by_executable_passes_resolved_path_as_argument(
+def test_stop_processes_by_executable_passes_resolved_path_in_environment(
     tmp_path: Path,
 ) -> None:
     adb = tmp_path / "adb.exe"
@@ -53,9 +53,12 @@ def test_stop_processes_by_executable_passes_resolved_path_as_argument(
 
     stop_processes_by_executable(adb, runner=runner)
 
-    assert calls[0][0][-1] == str(adb.resolve())
-    assert "ExecutablePath" in calls[0][0][-2]
-    assert "Stop-Process" in calls[0][0][-2]
+    command, kwargs = calls[0]
+    assert kwargs["env"]["LENOVO_CHECKIN_ADB_TARGET"] == str(adb.resolve())
+    assert str(adb.resolve()) not in command
+    assert "LENOVO_CHECKIN_ADB_TARGET" in command[-1]
+    assert "ExecutablePath" in command[-1]
+    assert "Stop-Process" in command[-1]
     assert "/IM" not in " ".join(calls[0][0])
 
 

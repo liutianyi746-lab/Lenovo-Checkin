@@ -26,7 +26,7 @@
 - [ ] **步骤 1：编写失败测试**
 
 ```python
-def test_stop_processes_by_executable_passes_resolved_path_as_argument(tmp_path: Path) -> None:
+def test_stop_processes_by_executable_passes_resolved_path_in_environment(tmp_path: Path) -> None:
     adb = tmp_path / "adb.exe"
     adb.touch()
     calls = []
@@ -37,15 +37,17 @@ def test_stop_processes_by_executable_passes_resolved_path_as_argument(tmp_path:
 
     stop_processes_by_executable(adb, runner=runner)
 
-    assert calls[0][0][-1] == str(adb.resolve())
-    assert "ExecutablePath" in calls[0][0][-2]
-    assert "Stop-Process" in calls[0][0][-2]
+    command, kwargs = calls[0]
+    assert kwargs["env"]["LENOVO_CHECKIN_ADB_TARGET"] == str(adb.resolve())
+    assert str(adb.resolve()) not in command
+    assert "ExecutablePath" in command[-1]
+    assert "Stop-Process" in command[-1]
     assert "/IM" not in " ".join(calls[0][0])
 ```
 
 - [ ] **步骤 2：运行并确认失败**
 
-运行：`.\.venv\Scripts\python.exe -m pytest tests\test_emulator.py::test_stop_processes_by_executable_passes_resolved_path_as_argument -q`
+运行：`.\.venv\Scripts\python.exe -m pytest tests\test_emulator.py::test_stop_processes_by_executable_passes_resolved_path_in_environment -q`
 
 预期：FAIL，无法导入 `stop_processes_by_executable`。
 
@@ -59,8 +61,12 @@ def stop_processes_by_executable(
     if os.name != "nt":
         raise EmulatorError("ADB 强制恢复仅支持 Windows")
     target = executable.expanduser().resolve()
+    child_env = os.environ.copy()
+    child_env["LENOVO_CHECKIN_ADB_TARGET"] = str(target)
     script = (
-        "$target=[IO.Path]::GetFullPath($args[0]);"
+        "$raw=[Environment]::GetEnvironmentVariable('LENOVO_CHECKIN_ADB_TARGET');"
+        "if ([String]::IsNullOrWhiteSpace($raw)) {throw 'missing ADB target'};"
+        "$target=[IO.Path]::GetFullPath($raw);"
         "$items=Get-CimInstance Win32_Process | Where-Object {"
         "$_.ExecutablePath -and "
         "[StringComparer]::OrdinalIgnoreCase.Equals("
@@ -69,13 +75,14 @@ def stop_processes_by_executable(
     )
     try:
         result = runner(
-            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script, str(target)],
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
             timeout=10,
             check=False,
+            env=child_env,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
         raise EmulatorError("无法精确清理雷电 ADB 进程") from exc
@@ -85,7 +92,7 @@ def stop_processes_by_executable(
 
 - [ ] **步骤 4：运行测试确认通过**
 
-运行：`.\.venv\Scripts\python.exe -m pytest tests\test_emulator.py::test_stop_processes_by_executable_passes_resolved_path_as_argument -q`
+运行：`.\.venv\Scripts\python.exe -m pytest tests\test_emulator.py::test_stop_processes_by_executable_passes_resolved_path_in_environment -q`
 
 预期：1 passed。
 

@@ -24,6 +24,7 @@ def run(config: Config) -> int:
     exit_code = 1
     try:
         manager = LDPlayerManager(config)
+        manager.reset_adb_server()
         address = manager.ensure_running()
         android = AndroidDevice(
             address, manager.find_adb_executable(), config.adb.connect_timeout

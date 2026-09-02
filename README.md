@@ -255,6 +255,8 @@ Unregister-ScheduledTask -TaskName "联想签到漏跑检查" -Confirm:$false
 
 ### `adb devices` 没有设备
 
+程序每次启动雷电前会自动重启雷电自带的 ADB 服务。如果常规 `adb kill-server` 卡死，只会结束可执行路径与当前配置完全相同的雷电 `adb.exe`，不会按进程名结束 Android Studio 或其他目录中的 ADB。
+
 确认雷电已经启动、ADB 调试已开启，然后执行：
 
 ```powershell

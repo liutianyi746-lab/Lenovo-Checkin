@@ -22,8 +22,12 @@ def stop_processes_by_executable(
     if os.name != "nt":
         raise EmulatorError("ADB 强制恢复仅支持 Windows")
     target = executable.expanduser().resolve()
+    child_env = os.environ.copy()
+    child_env["LENOVO_CHECKIN_ADB_TARGET"] = str(target)
     script = (
-        "$target=[IO.Path]::GetFullPath($args[0]);"
+        "$raw=[Environment]::GetEnvironmentVariable('LENOVO_CHECKIN_ADB_TARGET');"
+        "if ([String]::IsNullOrWhiteSpace($raw)) {throw 'missing ADB target'};"
+        "$target=[IO.Path]::GetFullPath($raw);"
         "$items=Get-CimInstance Win32_Process | Where-Object {"
         "$_.ExecutablePath -and "
         "[StringComparer]::OrdinalIgnoreCase.Equals("
@@ -39,7 +43,6 @@ def stop_processes_by_executable(
                 "-NonInteractive",
                 "-Command",
                 script,
-                str(target),
             ],
             capture_output=True,
             text=True,
@@ -47,6 +50,7 @@ def stop_processes_by_executable(
             errors="replace",
             timeout=10,
             check=False,
+            env=child_env,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
         raise EmulatorError("无法精确清理雷电 ADB 进程") from exc
