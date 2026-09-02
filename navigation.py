@@ -36,6 +36,7 @@ SECURITY_WORDS = (
     "风控",
 )
 MARKETING_POPUP_CLOSE_ID = "com.lenovo.club.app:id/iv_advertise_cancel"
+NATIVE_HOME_NAVIGATION_ID = "com.lenovo.club.app:id/navigator_bottom"
 
 
 def _texts(xml: str) -> set[str]:
@@ -59,6 +60,13 @@ def has_known_marketing_popup(xml: str) -> bool:
     )
 
 
+def has_resource_id(xml: str, resource_id: str) -> bool:
+    return any(
+        node.attrib.get("resource-id") == resource_id
+        for node in parse_hierarchy(xml).iter()
+    )
+
+
 def detect_page_from_xml(xml: str) -> PageState:
     root = parse_hierarchy(xml)
     texts = {
@@ -78,7 +86,7 @@ def detect_page_from_xml(xml: str) -> PageState:
         return PageState.MINE
     if {"首页", "分类", "购物车", "我的"}.issubset(texts):
         return PageState.HOME
-    if "com.lenovo.club.app:id/navigator_bottom" in resource_ids:
+    if NATIVE_HOME_NAVIGATION_ID in resource_ids:
         return PageState.HOME
     if {"乐享AI", "首页"}.issubset(texts):
         return PageState.LEXIANG_AI
@@ -233,12 +241,17 @@ class Navigator:
         except NavigationError:
             self.logger.warning("首页未暴露可访问节点，使用已验证的比例坐标")
             width, height = self.d.window_size()
-            self.d.click(int(width * 0.157), int(height * 0.088))
+            self.d.click(width * 5 // 32, height * 7 // 72)
         self._wait_for(
-            lambda xml: detect_page_from_xml(xml) is PageState.HOME, "商城首页"
+            lambda xml: has_resource_id(xml, NATIVE_HOME_NAVIGATION_ID),
+            "原生首页底部导航",
         )
 
     def go_to_mine(self) -> None:
+        self._wait_for(
+            lambda xml: has_resource_id(xml, NATIVE_HOME_NAVIGATION_ID),
+            "原生首页底部导航",
+        )
         self.logger.info("点击底部：我的")
         self._click_text("我的", prefer="bottom")
         self._wait_for(
