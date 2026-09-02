@@ -59,6 +59,9 @@ def test_stop_processes_by_executable_passes_resolved_path_in_environment(
     assert "LENOVO_CHECKIN_ADB_TARGET" in command[-1]
     assert "ExecutablePath" in command[-1]
     assert "Stop-Process" in command[-1]
+    assert "$ErrorActionPreference='Stop'" in command[-1]
+    assert "Get-CimInstance Win32_Process -Filter" in command[-1]
+    assert "remaining ADB processes" in command[-1]
     assert "/IM" not in " ".join(calls[0][0])
 
 

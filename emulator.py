@@ -25,15 +25,27 @@ def stop_processes_by_executable(
     child_env = os.environ.copy()
     child_env["LENOVO_CHECKIN_ADB_TARGET"] = str(target)
     script = (
+        "$ErrorActionPreference='Stop';"
         "$raw=[Environment]::GetEnvironmentVariable('LENOVO_CHECKIN_ADB_TARGET');"
         "if ([String]::IsNullOrWhiteSpace($raw)) {throw 'missing ADB target'};"
         "$target=[IO.Path]::GetFullPath($raw);"
-        "$items=Get-CimInstance Win32_Process | Where-Object {"
+        "$items=Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {"
         "$_.ExecutablePath -and "
         "[StringComparer]::OrdinalIgnoreCase.Equals("
         "[IO.Path]::GetFullPath($_.ExecutablePath),$target)};"
         "$items | ForEach-Object {"
-        "Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop}"
+        "$pidToStop=$_.ProcessId;"
+        "$current=Get-CimInstance Win32_Process -Filter "
+        "\"ProcessId = $pidToStop\" -ErrorAction Stop;"
+        "if ($current -and $current.ExecutablePath -and "
+        "[StringComparer]::OrdinalIgnoreCase.Equals("
+        "[IO.Path]::GetFullPath($current.ExecutablePath),$target)) {"
+        "Stop-Process -Id $pidToStop -Force -ErrorAction Stop}};"
+        "$remaining=Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {"
+        "$_.ExecutablePath -and "
+        "[StringComparer]::OrdinalIgnoreCase.Equals("
+        "[IO.Path]::GetFullPath($_.ExecutablePath),$target)};"
+        "if ($remaining) {throw 'remaining ADB processes after cleanup'}"
     )
     try:
         result = runner(
