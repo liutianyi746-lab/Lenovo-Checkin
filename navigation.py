@@ -37,6 +37,7 @@ SECURITY_WORDS = (
 )
 MARKETING_POPUP_CLOSE_ID = "com.lenovo.club.app:id/iv_advertise_cancel"
 NATIVE_HOME_NAVIGATION_ID = "com.lenovo.club.app:id/navigator_bottom"
+CHECKIN_ENTRY_ID = "com.lenovo.club.app:id/img_sign"
 
 
 def _texts(xml: str) -> set[str]:
@@ -260,20 +261,47 @@ class Navigator:
 
     def open_checkin_page(self) -> None:
         self.logger.info("找到：签到领好礼")
-        before = self.hierarchy()
-        try:
-            self._click_text("签到领好礼", prefer="top", contains=True)
-        except NavigationError:
-            self.logger.warning("签到入口未暴露可访问节点，使用已验证的比例坐标")
-            width, height = self.d.window_size()
-            self.d.click(int(width * 0.446), int(height * 0.148))
-        self.logger.info("点击签到入口")
-        self._wait_for(
-            lambda xml: (
-                xml != before and detect_page_from_xml(xml) is not PageState.MINE
-            ),
-            "签到页面",
-        )
+        attempts = min(self.max_retries, 3)
+        for attempt in range(attempts):
+            before = self.hierarchy()
+            root = parse_hierarchy(before)
+            entry = next(
+                (
+                    node
+                    for node in root.iter()
+                    if node.attrib.get("resource-id") == CHECKIN_ENTRY_ID
+                ),
+                None,
+            )
+            if entry is not None:
+                click_element_or_clickable_parent(self.d, root, entry)
+            else:
+                try:
+                    self._click_text("签到领好礼", prefer="top", contains=True)
+                except NavigationError:
+                    self.logger.warning(
+                        "签到入口未暴露可访问节点，使用已验证的比例坐标"
+                    )
+                    width, height = self.d.window_size()
+                    self.d.click(int(width * 0.446), int(height * 0.148))
+            self.logger.info("点击签到入口")
+            try:
+                self._wait_for(
+                    lambda xml: detect_page_from_xml(xml) is PageState.CHECKIN,
+                    "签到页面",
+                )
+                return
+            except SecurityChallengeError:
+                raise
+            except NavigationError:
+                if attempt + 1 >= attempts:
+                    raise
+                self.logger.warning("未进入签到页面，返回我的页面后重试")
+                self.d.press("back")
+                self._wait_for(
+                    lambda xml: detect_page_from_xml(xml) is PageState.MINE,
+                    "我的页面",
+                )
 
     def navigate_to_checkin(self) -> None:
         for _ in range(self.max_retries + 2):

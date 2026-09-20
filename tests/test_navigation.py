@@ -124,3 +124,104 @@ def test_go_to_mine_waits_for_native_home_before_clicking_mine(monkeypatch) -> N
         "click:我的",
         "wait:我的页面",
     ]
+
+
+def test_open_checkin_uses_real_img_sign_control_before_fallback(monkeypatch) -> None:
+    mine = (
+        '<hierarchy><node resource-id="com.lenovo.club.app:id/personal_container">'
+        '<node resource-id="com.lenovo.club.app:id/img_sign" clickable="true" '
+        'bounds="[759,134][949,209]" /></node></hierarchy>'
+    )
+    checkin = xml_with("签到有礼")
+
+    class Selector:
+        exists = True
+
+        def __init__(self, device) -> None:
+            self.device = device
+
+        def click(self) -> None:
+            self.device.resource_clicks += 1
+
+    class Device:
+        def __init__(self) -> None:
+            self.resource_clicks = 0
+            self.coordinate_clicks: list[tuple[int, int]] = []
+
+        def __call__(self, **selector: str) -> Selector:
+            assert selector == {"resourceId": "com.lenovo.club.app:id/img_sign"}
+            return Selector(self)
+
+        def click(self, x: int, y: int) -> None:
+            self.coordinate_clicks.append((x, y))
+
+    device = Device()
+    navigator = Navigator(device)
+    monkeypatch.setattr(navigator, "hierarchy", lambda: mine)
+
+    def wait_for(predicate, description: str) -> str:
+        assert description == "签到页面"
+        assert predicate(checkin)
+        return checkin
+
+    monkeypatch.setattr(navigator, "_wait_for", wait_for)
+
+    navigator.open_checkin_page()
+
+    assert device.resource_clicks == 1
+    assert device.coordinate_clicks == []
+
+
+def test_open_checkin_returns_from_wrong_destination_and_retries(monkeypatch) -> None:
+    mine = (
+        '<hierarchy><node resource-id="com.lenovo.club.app:id/personal_container">'
+        '<node resource-id="com.lenovo.club.app:id/img_sign" clickable="true" '
+        'bounds="[759,134][949,209]" /></node></hierarchy>'
+    )
+    checkin = xml_with("签到有礼")
+
+    class Selector:
+        exists = True
+
+        def __init__(self, device) -> None:
+            self.device = device
+
+        def click(self) -> None:
+            self.device.resource_clicks += 1
+
+    class Device:
+        def __init__(self) -> None:
+            self.resource_clicks = 0
+            self.back_presses = 0
+
+        def __call__(self, **selector: str) -> Selector:
+            assert selector == {"resourceId": "com.lenovo.club.app:id/img_sign"}
+            return Selector(self)
+
+        def press(self, key: str) -> None:
+            assert key == "back"
+            self.back_presses += 1
+
+    device = Device()
+    navigator = Navigator(device, max_retries=2)
+    monkeypatch.setattr(navigator, "hierarchy", lambda: mine)
+    waits = 0
+
+    def wait_for(predicate, description: str) -> str:
+        nonlocal waits
+        assert description in {"签到页面", "我的页面"}
+        if description == "我的页面":
+            assert predicate(mine)
+            return mine
+        waits += 1
+        if waits == 1:
+            raise NavigationError("进入了商品广告")
+        assert predicate(checkin)
+        return checkin
+
+    monkeypatch.setattr(navigator, "_wait_for", wait_for)
+
+    navigator.open_checkin_page()
+
+    assert device.resource_clicks == 2
+    assert device.back_presses == 1
