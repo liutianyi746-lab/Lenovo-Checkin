@@ -296,6 +296,9 @@ class Navigator:
             except NavigationError:
                 if attempt + 1 >= attempts:
                     raise
+                if detect_page_from_xml(self.hierarchy()) is PageState.MINE:
+                    self.logger.warning("签到入口点击无响应，直接重试")
+                    continue
                 self.logger.warning("未进入签到页面，返回我的页面后重试")
                 self.d.press("back")
                 self._wait_for(

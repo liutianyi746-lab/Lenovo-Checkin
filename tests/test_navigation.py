@@ -204,7 +204,9 @@ def test_open_checkin_returns_from_wrong_destination_and_retries(monkeypatch) ->
 
     device = Device()
     navigator = Navigator(device, max_retries=2)
-    monkeypatch.setattr(navigator, "hierarchy", lambda: mine)
+    wrong_destination = xml_with("商品详情")
+    pages = iter((mine, wrong_destination, mine))
+    monkeypatch.setattr(navigator, "hierarchy", lambda: next(pages))
     waits = 0
 
     def wait_for(predicate, description: str) -> str:
@@ -225,3 +227,55 @@ def test_open_checkin_returns_from_wrong_destination_and_retries(monkeypatch) ->
 
     assert device.resource_clicks == 2
     assert device.back_presses == 1
+
+
+def test_open_checkin_retries_without_back_when_click_has_no_effect(monkeypatch) -> None:
+    mine = (
+        '<hierarchy><node resource-id="com.lenovo.club.app:id/personal_container">'
+        '<node resource-id="com.lenovo.club.app:id/img_sign" clickable="true" '
+        'bounds="[759,134][949,209]" /></node></hierarchy>'
+    )
+    checkin = xml_with("签到有礼")
+
+    class Selector:
+        exists = True
+
+        def __init__(self, device) -> None:
+            self.device = device
+
+        def click(self) -> None:
+            self.device.resource_clicks += 1
+
+    class Device:
+        def __init__(self) -> None:
+            self.resource_clicks = 0
+            self.back_presses = 0
+
+        def __call__(self, **selector: str) -> Selector:
+            assert selector == {"resourceId": "com.lenovo.club.app:id/img_sign"}
+            return Selector(self)
+
+        def press(self, key: str) -> None:
+            assert key == "back"
+            self.back_presses += 1
+
+    device = Device()
+    navigator = Navigator(device, max_retries=2)
+    monkeypatch.setattr(navigator, "hierarchy", lambda: mine)
+    waits = 0
+
+    def wait_for(predicate, description: str) -> str:
+        nonlocal waits
+        assert description == "签到页面"
+        waits += 1
+        if waits == 1:
+            raise NavigationError("点击无响应")
+        assert predicate(checkin)
+        return checkin
+
+    monkeypatch.setattr(navigator, "_wait_for", wait_for)
+
+    navigator.open_checkin_page()
+
+    assert device.resource_clicks == 2
+    assert device.back_presses == 0
