@@ -1,0 +1,3 @@
+# Keep Windows scripts runnable in GitHub source ZIPs as well as Git checkouts.
+direct/*.cmd -text diff whitespace=trailing-space,space-before-tab,cr-at-eol
+direct/*.ps1 -text diff whitespace=trailing-space,space-before-tab,cr-at-eol
