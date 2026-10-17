@@ -9,3 +9,8 @@ dumps/*.xml
 !logs/.gitkeep
 !screenshots/.gitkeep
 !dumps/.gitkeep
+*.dpapi
+direct/credentials.local.json
+direct/.credentials.*.tmp
+direct/*.log
+direct/计划任务备份/
