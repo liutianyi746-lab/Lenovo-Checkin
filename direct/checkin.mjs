@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { constants, createCipheriv, createHash, createPublicKey, generateKeyPairSync, privateDecrypt, publicEncrypt, randomBytes, randomInt } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 
 const HOST = 'https://api.club.lenovo.cn';
 const LETTERS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -42,9 +43,16 @@ export async function createClient(config, fetchImpl = fetch) {
     'User-Agent':'Apache-HttpClient/UNAVAILABLE (java 1.4)', 'Accept-Encoding':'identity'
   };
   async function request(path, options = {}) {
-    const response = await fetchImpl(HOST + path, {
-      ...options, headers:{ ...headers, ...options.headers }, redirect:'error', signal:AbortSignal.timeout(25000)
-    });
+    let response;
+    try {
+      response = await fetchImpl(HOST + path, {
+        ...options, headers:{ ...headers, ...options.headers }, redirect:'error', signal:AbortSignal.timeout(25000)
+      });
+    } catch (error) {
+      const value = error?.cause?.code;
+      const code = typeof value === 'string' && /^[A-Z0-9_]{1,40}$/.test(value) ? value : 'UNKNOWN';
+      throw new Error(`网络请求失败（${code}）`);
+    }
     const text = await response.text();
     assert(text.length <= 1024*1024, '接口响应过大');
     let data;
@@ -102,10 +110,19 @@ export function signedStatus(response) {
   throw new Error('服务器没有返回明确的签到状态，已停止操作');
 }
 
-export async function runCheckin(config, client, statusOnly = false) {
+export async function runCheckin(config, client, statusOnly = false, { markerDir = fileURLToPath(new URL('.',import.meta.url)), now } = {}) {
   const status = await client('GET','/signin/v2/assetsAndStatus',{ source:'0' });
   if (signedStatus(status)) return { result:'already_signed', continueCount:status.continueCount };
   if (statusOnly) return { result:'not_signed', continueCount:status.continueCount };
+  const date = now ?? new Date();
+  assert(date instanceof Date && !Number.isNaN(date.getTime()),'本地日期无效，已停止签到');
+  const day = [String(date.getFullYear()).padStart(4,'0'),String(date.getMonth()+1).padStart(2,'0'),String(date.getDate()).padStart(2,'0')].join('-');
+  try {
+    writeFileSync(join(markerDir,`.checkin-${day}.pending`),'submitted\n',{ flag:'wx',mode:0o600 });
+  } catch (error) {
+    if (error?.code === 'EEXIST') throw new Error('今天已尝试提交签到但状态尚未确认，请人工检查；已停止重复提交');
+    throw new Error('无法保存签到提交标记，已停止提交');
+  }
   // shortcut: 登录态从当前 App 导入；失效时需重新登录并更新，尚未实现独立登录流程。
   await client('POST','/signin/v2/add',{ uid:config.uid, source:'0', imei:config.imei });
   const after = await client('GET','/signin/v2/assetsAndStatus',{ source:'0' });

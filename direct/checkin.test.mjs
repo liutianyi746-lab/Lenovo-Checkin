@@ -1,7 +1,15 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { constants, createDecipheriv, createHash, createPublicKey, generateKeyPairSync, privateDecrypt, publicEncrypt } from 'node:crypto';
-import { createClient, makeSn, makeToken, runCheckin, signedStatus, validateConfig } from './checkin.mjs';
+import { createClient, makeSn, makeToken, runCheckin as guardedRunCheckin, signedStatus, validateConfig } from './checkin.mjs';
+
+const testRoot = mkdtempSync(join(tmpdir(),'lenovo-checkin-guard-'));
+after(() => rmSync(testRoot,{ recursive:true,force:true }));
+const isolatedDir = () => mkdtempSync(join(testRoot,'case-'));
+const runCheckin = (config,client,statusOnly = false) => guardedRunCheckin(config,client,statusOnly,{ markerDir:isolatedDir() });
 
 const config = {
   authorization:'Lenovo fixture-session', imei:'fixture_client_123', uid:'12345',
@@ -89,6 +97,22 @@ test('invalid credentials are rejected before a client can send requests',() => 
   assert.throws(() => validateConfig({ ...config, flags:{ ...config.flags,enE:'false' } }));
 });
 
+test('network errors report only a safe cause code, without retrying',async () => {
+  for (const [code,expected] of [['ECONNRESET','ECONNRESET'],['SECRET token=https://example.com','UNKNOWN'],[undefined,'UNKNOWN']]) {
+    let calls = 0;
+    const fetchImpl = async () => {
+      calls++;
+      throw new TypeError('secret request details', { cause:{ code, message:'secret token' } });
+    };
+    await assert.rejects(createClient(config,fetchImpl), error => {
+      assert.equal(error.message, `网络请求失败（${expected}）`);
+      assert(!error.message.includes('secret'));
+      return true;
+    });
+    assert.equal(calls,1);
+  }
+});
+
 test('unknown status never submits a check-in',async () => {
   const stub = scriptedClient([{}]);
   await assert.rejects(runCheckin(config,stub.client),/明确的签到状态/);
@@ -111,6 +135,73 @@ test('unsigned string submits once and requires a fresh positive confirmation',a
   const stub = scriptedClient([{ isSign:'false' },{}, { isSign:'true',continueCount:'55' }]);
   assert.deepEqual(await runCheckin(config,stub.client),{ result:'signed',continueCount:'55' });
   assert.deepEqual(stub.calls,[statusCall,signCall,statusCall]);
+});
+
+test('uncertain submission is never sent again on the same local day',async () => {
+  for (const responses of [
+    [{ isSign:false },new Error('timeout')],
+    [{ isSign:false },{},new Error('confirmation failed')],
+    [{ isSign:false },{},{}],
+    [{ isSign:false },{},{ isSign:false }]
+  ]) {
+    const markerDir = isolatedDir(), now = new Date(2026,10,6,12);
+    const first = scriptedClient(responses);
+    await assert.rejects(guardedRunCheckin(config,first.client,false,{ markerDir,now }));
+    const second = scriptedClient([{ isSign:false }]);
+    await assert.rejects(guardedRunCheckin(config,second.client,false,{ markerDir,now }),/已停止|人工/);
+    assert.deepEqual(second.calls,[statusCall]);
+    const nextDay = scriptedClient([{ isSign:false },{},{ isSign:true }]);
+    assert.equal((await guardedRunCheckin(config,nextDay.client,false,{ markerDir,now:new Date(2026,10,7,12) })).result,'signed');
+    assert.deepEqual(nextDay.calls,[statusCall,signCall,statusCall]);
+  }
+});
+
+test('confirmed signed and status-only checks do not submit or alter markers',async () => {
+  const markerDir = isolatedDir(), now = new Date(2026,10,6,12);
+  const failed = scriptedClient([{ isSign:false },new Error('timeout')]);
+  await assert.rejects(guardedRunCheckin(config,failed.client,false,{ markerDir,now }));
+  const before = readdirSync(markerDir);
+  assert.equal(before.length,1);
+  const signed = scriptedClient([{ isSign:true }]);
+  assert.equal((await guardedRunCheckin(config,signed.client,false,{ markerDir,now })).result,'already_signed');
+  const only = scriptedClient([{ isSign:false }]);
+  assert.equal((await guardedRunCheckin(config,only.client,true,{ markerDir,now })).result,'not_signed');
+  assert.deepEqual(readdirSync(markerDir),before);
+  assert.deepEqual(signed.calls,[statusCall]);
+  assert.deepEqual(only.calls,[statusCall]);
+});
+
+test('cannot create marker means no submission',async () => {
+  const markerDir = join(isolatedDir(),'not-a-directory');
+  writeFileSync(markerDir,'fixture');
+  const stub = scriptedClient([{ isSign:false }]);
+  await assert.rejects(guardedRunCheckin(config,stub.client,false,{ markerDir,now:new Date(2026,10,6,12) }));
+  assert.deepEqual(stub.calls,[statusCall]);
+});
+
+test('concurrent unsigned runs submit at most once',async () => {
+  const markerDir = isolatedDir(), now = new Date(2026,10,6,12);
+  let queries = 0, posts = 0, release;
+  const bothQueried = new Promise(resolve => { release = resolve; });
+  const client = async method => {
+    if (method === 'POST') { posts++; return {}; }
+    queries++;
+    if (queries <= 2) {
+      if (queries === 2) release();
+      await bothQueried;
+      return { isSign:false };
+    }
+    return { isSign:true };
+  };
+  const outcomes = await Promise.allSettled([
+    guardedRunCheckin(config,client,false,{ markerDir,now }),
+    guardedRunCheckin(config,client,false,{ markerDir,now })
+  ]);
+  assert.equal(posts,1);
+  assert.equal(outcomes.filter(outcome => outcome.status === 'fulfilled').length,1);
+  assert.equal(outcomes.filter(outcome => outcome.status === 'rejected').length,1);
+  assert.equal(outcomes.find(outcome => outcome.status === 'fulfilled').value.result,'signed');
+  assert.match(outcomes.find(outcome => outcome.status === 'rejected').reason.message,/已停止|人工/);
 });
 
 for (const [name,results,expectedCalls] of [
